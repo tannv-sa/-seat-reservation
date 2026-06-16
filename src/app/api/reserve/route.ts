@@ -53,14 +53,16 @@ export async function POST(req: Request) {
     }
   }
 
-  // Atomic hold: only succeeds if seat is currently available.
-  // Single UPDATE prevents race conditions — no Redis lock needed.
+  // Atomic hold: succeeds if seat is available OR if its hold has expired.
+  // Combining both cases in one UPDATE prevents race conditions without Redis.
+  const now = new Date().toISOString()
   const holdUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString()
+
   const { data: seat, error: seatError } = await service
     .from('seats')
     .update({ status: 'held', held_by: user.id, held_until: holdUntil })
     .eq('id', seatId)
-    .eq('status', 'available')
+    .or(`status.eq.available,and(status.eq.held,held_until.lt.${now})`)
     .select()
     .maybeSingle()
 

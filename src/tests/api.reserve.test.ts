@@ -35,7 +35,7 @@ vi.mock('@/lib/supabase/service', () => ({
           then: (res: any, rej: any) =>
             Promise.resolve({ data: null, error: null }).then(res, rej),
         }
-        ;['select', 'update', 'eq', 'lt', 'in', 'order'].forEach(m => {
+        ;['select', 'update', 'eq', 'lt', 'in', 'or', 'order'].forEach(m => {
           b[m] = () => b
         })
         return b
