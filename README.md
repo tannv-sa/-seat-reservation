@@ -4,7 +4,7 @@
 
 A production-grade seat reservation platform built with Next.js 16, Supabase, and Stripe. Demonstrates engineering judgment across authentication, concurrency handling, payment reliability, and operational concerns.
 
-**Live demo:** https://seat-reservation-93jj-5cuuk1y5g-tannvsa-3076s-projects.vercel.app
+**Live demo:** https://seat-reservation-93jj-git-master-tannvsa-3076s-projects.vercel.app/seats
 
 ---
 
