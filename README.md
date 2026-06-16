@@ -303,3 +303,152 @@ INSERT INTO seats (label) VALUES
 | No MFA | Lower auth assurance | HttpOnly cookies + refresh token rotation |
 | No rate limiting | Reservation API can be called rapidly | Acceptable for assessment scope |
 | No confirmation email | User has no receipt | Stripe sends its own receipt in test mode |
+
+---
+
+## Roadmap — Growth Planning & Trade-off Analysis
+
+This section documents how the platform should evolve as business scales, and the key architectural trade-offs at each stage.
+
+### Phase 1 — Current (Single Venue, Low Traffic)
+
+> The foundation is intentionally lean: one Next.js monolith, one Supabase project, one Stripe account.
+> Engineering investment goes into correctness (atomic hold, webhook source of truth) not premature scaling.
+
+| Capability | Current approach | Acceptable because |
+|------------|-----------------|-------------------|
+| Concurrency | Atomic PostgreSQL `UPDATE` | PostgreSQL handles thousands of TPS; 30 seats is trivial |
+| Hold cleanup | Daily cron + inline reclaim | Inline reclaim makes cron a cosmetic fallback |
+| Seat status updates | 60 s auto-refresh | Acceptable latency for low-traffic single venue |
+| Auth | Magic link only | Reduces attack surface; no password DB to leak |
+| Infrastructure | Vercel Hobby + Supabase Free | Zero ops overhead; ~$0/month |
+
+---
+
+### Phase 2 — Early Growth (Multiple Events, ~1k Users/Month)
+
+**Trigger:** second venue, ticket prices vary, users report "seat flickering" or slow confirmation.
+
+#### Add: Real-time seat status
+Replace 60 s polling with Supabase Realtime channel subscription.
+
+```typescript
+// Subscribe to seat changes — push to all connected browsers instantly
+supabase
+  .channel('seats')
+  .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'seats' }, handleSeatChange)
+  .subscribe()
+```
+
+**Trade-off:** Supabase Realtime requires upgrading to Pro plan ($25/month). Delay until seat flickering becomes a measurable user complaint, not preemptively.
+
+#### Add: Hold countdown timer
+Show remaining hold time on the checkout page so users know how long they have.
+
+```typescript
+// Derive from held_until returned by /api/reserve
+const secondsLeft = Math.max(0, Math.floor((new Date(heldUntil).getTime() - Date.now()) / 1000))
+```
+
+**Trade-off:** Purely frontend, zero backend cost. Ship early — high user value, low effort.
+
+#### Add: Confirmation email (transactional)
+Send a booking receipt after `payment_intent.succeeded` in the webhook handler.
+
+**Options:**
+| Provider | Cost | Notes |
+|----------|------|-------|
+| Resend | Free up to 3k/month | Simple REST API, good Next.js DX |
+| Stripe built-in receipt | Free | Already fires automatically in Stripe dashboard |
+| SendGrid | Free up to 100/day | More features, more config |
+
+**Trade-off:** Use Stripe's built-in receipt in test mode. Add Resend when customised branding is required.
+
+#### Add: Rate limiting on `/api/reserve`
+Prevent a single user from hammering the reservation API.
+
+```typescript
+// Vercel Edge middleware — sliding window via Upstash Redis
+import { Ratelimit } from '@upstash/ratelimit'
+const ratelimit = new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(5, '1m') })
+```
+
+**Trade-off:** Adds Upstash Redis dependency (~$0 at low traffic). Alternative: simple in-memory counter per IP (lost on cold start, acceptable for Phase 2).
+
+#### Upgrade: Vercel cron to per-minute schedule
+Move to Vercel Pro ($20/month) to unlock `* * * * *` cron — seats release within 1 minute instead of at midnight.
+
+**Trade-off:** Inline reclaim already handles the UX impact. Upgrade only if stale DB rows cause reporting or analytics problems.
+
+---
+
+### Phase 3 — Scale (Multi-Venue SaaS, >10k Users/Month)
+
+**Trigger:** multiple clients onboarding, different seat layouts, revenue > $10k/month, first incident on-call.
+
+#### Introduce: Multi-tenancy
+Add `event_id` and `venue_id` to `seats` and `reservations` tables. Each client gets their own event, seat map, and Stripe account (Stripe Connect).
+
+```sql
+ALTER TABLE seats ADD COLUMN event_id UUID REFERENCES events(id);
+ALTER TABLE reservations ADD COLUMN event_id UUID REFERENCES events(id);
+```
+
+**Trade-off:** Single shared DB (schema-per-tenant) vs separate Supabase projects per client. Start with shared schema — simpler ops. Split when a client demands data isolation for compliance.
+
+#### Re-evaluate: Queue-based reservation at concert scale
+At tens of thousands of concurrent users for a single event (stadium, festival), the atomic `UPDATE` approach hits PostgreSQL connection limits.
+
+**Options:**
+| Approach | Throughput | Complexity | When to adopt |
+|----------|-----------|------------|---------------|
+| Atomic `UPDATE` (current) | ~5k TPS | Low | Up to ~5k concurrent users |
+| Redis distributed lock (Redlock) | ~50k TPS | Medium | 5k–50k concurrent |
+| Queue-based (BullMQ + worker) | Unlimited (horizontal) | High | Stadium-scale events |
+
+**Recommendation:** Keep atomic UPDATE until load tests prove it insufficient. Add Redis lock as the next step — not a queue, which adds worker process management overhead.
+
+#### Introduce: Observability stack
+Add structured logging, error tracking, and latency alerting before the first on-call rotation.
+
+| Concern | Tool | Notes |
+|---------|------|-------|
+| Error tracking | Sentry | `@sentry/nextjs` — one-line setup |
+| Logging | Vercel Log Drains → Datadog | Structured JSON logs |
+| Uptime | Better Uptime / Checkly | Webhook endpoint health check |
+| DB performance | Supabase Dashboard | Slow query log, index usage |
+
+**Trade-off:** Instrument early — retroactively adding observability after an incident is always more expensive than doing it at Phase 3 entry.
+
+#### Migrate: Supabase Free → Pro (or dedicated PostgreSQL)
+- **Supabase Pro ($25/month):** point-in-time recovery, daily backups, no pausing, Realtime included
+- **Dedicated PostgreSQL (AWS RDS / Neon):** full control, custom extensions, needed when Supabase's managed layer becomes a constraint
+
+**Trade-off:** Stay on Supabase Pro until RLS or extension limitations are hit. Migrating away is straightforward since Supabase uses standard PostgreSQL — swap the connection string, keep the schema.
+
+#### Add: MFA and OAuth providers
+Add TOTP/SMS second factor and Google/GitHub OAuth as the user base grows and enterprise clients require SSO.
+
+**Trade-off:** Supabase Auth natively supports MFA and OAuth providers — no code change beyond enabling in the dashboard. No reason not to enable MFA at Phase 3 entry.
+
+---
+
+### Decision Framework
+
+When evaluating any upgrade, apply this priority order:
+
+```
+1. Does it fix a user-visible bug or data integrity risk?   → Ship immediately
+2. Does it reduce operational risk (data loss, downtime)?   → Ship this sprint
+3. Does it improve user experience measurably?              → Schedule next quarter
+4. Does it reduce tech debt or improve DX?                  → Batch with related work
+5. Is it speculative / "nice to have"?                      → Backlog, revisit at next phase trigger
+```
+
+### Summary
+
+| Growth stage | Key investment | Avoid until needed |
+|--------------|---------------|-------------------|
+| Phase 1 (now) | Correctness, atomic hold, webhook source of truth | Real-time, queues, multi-tenancy |
+| Phase 2 (~1k users) | Realtime updates, countdown timer, rate limiting, email receipts | Microservices, dedicated infra |
+| Phase 3 (~10k+ users) | Multi-tenancy, observability, Supabase Pro, MFA | Redis/queue (unless load-tested to need it) |
