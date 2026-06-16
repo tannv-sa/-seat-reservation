@@ -37,7 +37,7 @@ A production-grade seat reservation platform built with Next.js 16, Supabase, an
 
 ## Architecture Decisions
 
-Full trade-off analysis in [docs/adr/](docs/adr/).
+Full trade-off analysis in [docs/adr/](docs/adr/). Architecture diagrams in [docs/architecture.md](docs/architecture.md).
 
 | Concern | Decision | Rationale |
 |---------|----------|-----------|
