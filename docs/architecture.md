@@ -188,34 +188,34 @@ How expired holds are recovered — two complementary mechanisms.
 
 ```mermaid
 flowchart TD
-    A([User clicks a seat]) --> B{Seat status in DB?}
+    A([User clicks a seat]) --> B["POST /api/reserve"]
+    B --> C["Atomic UPDATE seats<br/>WHERE status = 'available'<br/>OR status = 'held' AND held_until &lt; NOW()"]
+    C --> E{Rows returned?}
 
-    B -->|available| C[Atomic UPDATE<br/>status='held'<br/>held_until = now+10m]
-    B -->|held AND held_until &lt; now| C
-    B -->|held AND held_until &ge; now| D[0 rows updated]
+    E -->|"1 row — hold acquired"| F["Create Stripe PaymentIntent<br/>INSERT reservation status=pending"]
+    E -->|"0 rows — seat unavailable"| G["409 Seat just taken"]
 
-    C --> E{Rows updated?}
-    E -->|1 row| F[Hold acquired ✅<br/>Create PaymentIntent]
-    E -->|0 rows| D
+    F --> P([Proceed to checkout])
+    G --> R([User picks another seat])
 
-    D --> G[409 — seat just taken]
-
-    subgraph Cron["Cron fallback (daily at midnight UTC)"]
-        H([Vercel Cron fires]) --> I[/api/cron/release-holds]
-        I --> J[UPDATE seats SET status='available'<br/>WHERE status='held' AND held_until &lt; now]
-        J --> K[UPDATE reservations SET status='cancelled'<br/>WHERE seat_id IN released_ids]
+    subgraph Cron["Cron fallback — daily at midnight UTC"]
+        H([Vercel Cron]) --> I["/api/cron/release-holds"]
+        I --> J["UPDATE seats SET status = available<br/>WHERE status = held AND held_until &lt; NOW()"]
+        J --> K["UPDATE reservations SET status = cancelled<br/>WHERE seat_id IN released seats"]
+        K --> L([Seats available again])
     end
 
-    subgraph UI["UI layer (no DB write)"]
-        L([Seats page loads]) --> M{seat.held_until &lt; now?}
-        M -->|yes| N[Render as available 🟢<br/>visual only]
-        M -->|no| O[Render as on-hold 🟡]
+    subgraph UILayer["UI normalisation — no DB write"]
+        M([Seats page renders]) --> N{"seat.status = held<br/>AND held_until &lt; NOW?"}
+        N -->|yes| O["Display as Available<br/>SeatCard shows green"]
+        N -->|no| Q["Display as On Hold<br/>SeatCard shows yellow"]
     end
 
-    style C fill:#bbf7d0,stroke:#16a34a
-    style D fill:#fee2e2,stroke:#dc2626
+    style C fill:#dbeafe,stroke:#3b82f6
     style F fill:#bbf7d0,stroke:#16a34a
     style G fill:#fee2e2,stroke:#dc2626
+    style J fill:#bbf7d0,stroke:#16a34a
+    style O fill:#bbf7d0,stroke:#16a34a
 ```
 
 ---
