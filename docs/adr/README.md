@@ -1,30 +1,30 @@
 # Architecture Decision Records (ADR)
 
-Thư mục này chứa các quyết định kiến trúc quan trọng của hệ thống đặt chỗ ngồi.
+This directory contains the key architectural decisions for the seat reservation platform.
 
 ## Format
 
-Mỗi ADR theo cấu trúc:
-- **Bối cảnh** — vấn đề cần giải quyết
-- **Các lựa chọn đã cân nhắc** — options với trade-off
-- **Quyết định** — lựa chọn cuối cùng
-- **Lý do** — tại sao chọn, tại sao không chọn cái khác
-- **Hệ quả** — tích cực, tiêu cực, rủi ro
+Each ADR follows this structure:
+- **Context** — the problem to be solved
+- **Options considered** — alternatives with trade-offs
+- **Decision** — the chosen approach
+- **Rationale** — why this option, why not the others
+- **Consequences** — positives, negatives, risks
 
-## Danh sách ADR
+## Index
 
-| # | Tiêu đề | Trạng thái |
-|---|---------|------------|
-| [ADR-0001](0001-overall-stack-selection.md) | Lựa chọn Technology Stack tổng thể | Accepted |
-| [ADR-0002](0002-authentication-strategy.md) | Chiến lược xác thực người dùng (90-day session) | Accepted |
-| [ADR-0003](0003-concurrency-seat-reservation.md) | Xử lý đồng thời khi đặt ghế (Race Condition) | Accepted |
-| [ADR-0004](0004-payment-webhook-vs-redirect.md) | Xác nhận đặt chỗ qua Webhook vs. Redirect | Accepted |
+| # | Title | Status |
+|---|-------|--------|
+| [ADR-0001](0001-overall-stack-selection.md) | Overall Technology Stack Selection | Accepted |
+| [ADR-0002](0002-authentication-strategy.md) | Authentication Strategy (90-day session) | Accepted |
+| [ADR-0003](0003-concurrency-seat-reservation.md) | Concurrency Handling for Seat Reservation (Race Condition) | Accepted |
+| [ADR-0004](0004-payment-webhook-vs-redirect.md) | Payment Confirmation: Webhook vs. Redirect | Accepted |
 
-## Quyết định cốt lõi (tóm tắt)
+## Core Decisions (summary)
 
 ```
 Stack:   Next.js 16 + Supabase + Stripe + Vercel
-Auth:    Supabase Auth, magic link, JWT 90 ngày, refresh token rotation
-DB:      Atomic UPDATE để tránh race condition + DB unique constraint backstop
-Payment: Stripe Webhook là source of truth, không phải browser redirect
+Auth:    Supabase Auth, magic link, JWT 90 days, refresh token rotation
+DB:      Atomic UPDATE to prevent race conditions + DB unique constraint as backstop
+Payment: Stripe Webhook is the source of truth, not the browser redirect
 ```

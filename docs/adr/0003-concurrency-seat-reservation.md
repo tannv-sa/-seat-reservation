@@ -1,44 +1,44 @@
-# ADR-0003: Xử lý đồng thời khi đặt ghế (Race Condition)
+# ADR-0003: Concurrency Handling for Seat Reservation (Race Condition)
 
-- **Trạng thái:** Accepted
-- **Ngày:** 2026-06-16
-- **Người quyết định:** Engineering Team
-
----
-
-## Bối cảnh
-
-Đây là vấn đề kỹ thuật quan trọng nhất của hệ thống đặt chỗ: nhiều người dùng có thể chọn cùng một ghế trống cùng lúc. Nếu không xử lý đúng, cùng một ghế có thể được đặt bởi nhiều người.
-
-**Luồng nguy hiểm (race condition):**
-```
-User A: đọc ghế #1 → trạng thái "available"
-User B: đọc ghế #1 → trạng thái "available"
-User A: cập nhật → "reserved"
-User B: cập nhật → "reserved"  ← DOUBLE BOOKING
-```
+- **Status:** Accepted
+- **Date:** 2026-06-16
+- **Deciders:** Engineering Team
 
 ---
 
-## Các lựa chọn đã cân nhắc
+## Context
 
-### Option A: Optimistic Locking với atomic UPDATE (được chọn)
-### Option B: Pessimistic Locking (SELECT FOR UPDATE)
+This is the most important technical problem in a seat reservation system: multiple users can select the same available seat at the same time. Without proper handling, the same seat could be booked by more than one person.
+
+**The dangerous flow (race condition):**
+```
+User A: reads seat #1 → status "available"
+User B: reads seat #1 → status "available"
+User A: updates → "reserved"
+User B: updates → "reserved"  ← DOUBLE BOOKING
+```
+
+---
+
+## Options Considered
+
+### Option A: Optimistic locking with atomic UPDATE (chosen)
+### Option B: Pessimistic locking (SELECT FOR UPDATE)
 ### Option C: Application-level lock (Redis / in-memory)
 ### Option D: Queue-based serialization
 
 ---
 
-## Quyết định
+## Decision
 
-**Chọn Option A: Atomic UPDATE với điều kiện `WHERE status = 'available'` + seat hold mechanism + DB unique constraint làm backstop.**
+**Choose Option A: Atomic UPDATE with `WHERE status = 'available'` condition + seat hold mechanism + DB unique constraint as a backstop.**
 
 ### Schema
 
 ```sql
 CREATE TABLE seats (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  label       TEXT NOT NULL,            -- 'A1', 'A2', 'A3'
+  label       TEXT NOT NULL,
   status      TEXT NOT NULL DEFAULT 'available',  -- available | held | reserved
   held_by     UUID REFERENCES auth.users(id),
   held_until  TIMESTAMPTZ,
@@ -50,94 +50,86 @@ CREATE TABLE reservations (
   seat_id            UUID NOT NULL REFERENCES seats(id),
   user_id            UUID NOT NULL REFERENCES auth.users(id),
   payment_intent_id  TEXT UNIQUE,
-  status             TEXT NOT NULL DEFAULT 'pending', -- pending | confirmed | cancelled
+  status             TEXT NOT NULL DEFAULT 'pending',  -- pending | confirmed | cancelled
   created_at         TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT valid_res_status CHECK (status IN ('pending', 'confirmed', 'cancelled'))
 );
 
--- Partial unique index — phải dùng CREATE UNIQUE INDEX riêng, không thể inline WHERE trong table constraint
+-- Partial unique index — must use CREATE UNIQUE INDEX separately;
+-- PostgreSQL does not support WHERE in table-level CONSTRAINT.
 CREATE UNIQUE INDEX one_confirmed_per_seat ON reservations (seat_id) WHERE (status = 'confirmed');
 ```
 
-### Logic đặt ghế (atomic)
+### Atomic seat hold logic
 
 ```sql
--- Bước 1: Atomic hold — chỉ thành công nếu ghế đang available
+-- Step 1: Atomic hold — succeeds only if the seat is available OR its hold has expired
 UPDATE seats
 SET
   status     = 'held',
   held_by    = $user_id,
   held_until = NOW() + INTERVAL '10 minutes'
 WHERE id = $seat_id
-  AND status = 'available'
+  AND (status = 'available' OR (status = 'held' AND held_until < NOW()))
 RETURNING *;
 
--- Nếu 0 rows trả về → ghế đã bị lấy → báo lỗi cho user
+-- If 0 rows returned → seat is taken → return 409 to the user
 ```
 
 ---
 
-## Lý do
+## Rationale
 
-### Tại sao Optimistic Locking (Option A)?
-- **Atomic ở tầng DB** — `WHERE status = 'available'` và UPDATE là một operation duy nhất, PostgreSQL đảm bảo serializable
-- Không giữ lock trong suốt quá trình thanh toán (không block các ghế khác)
-- Đơn giản, không cần infrastructure thêm (Redis, queue)
-- Phù hợp với low-to-medium concurrency (3 ghế, không phải 10,000 vé concert)
+### Why Optimistic Locking (Option A)?
+- **Atomic at the DB layer** — `WHERE status = 'available'` and the UPDATE are a single operation; PostgreSQL guarantees a single winner
+- Does not hold a lock during the payment flow (other seats are not blocked)
+- Simple, no extra infrastructure (no Redis, no queue)
+- Appropriate for low-to-medium concurrency (a small venue, not 10,000 concert tickets)
 
-### Tại sao không dùng Pessimistic Locking (Option B)?
-- `SELECT FOR UPDATE` giữ lock trong DB transaction
-- Nếu transaction kéo dài (user đang nhập thẻ), các request khác bị block
-- Dễ gây deadlock nếu không cẩn thận với thứ tự lock
-- Over-kill cho use case này
+### Why not Pessimistic Locking (Option B)?
+- `SELECT FOR UPDATE` holds a DB-level lock for the entire transaction
+- If the transaction is long-lived (user is entering card details), other requests are blocked
+- Risk of deadlock if lock ordering is not carefully managed
+- Overkill for this use case
 
-### Tại sao không dùng Redis Lock (Option C)?
-- Thêm một infrastructure dependency (Redis server)
-- Distributed lock phức tạp hơn (Redlock algorithm, TTL, network partition)
-- Nếu Redis down, toàn bộ đặt chỗ bị block
-- Không cần thiết khi PostgreSQL đã có thể xử lý atomic operations
+### Why not Redis Lock (Option C)?
+- Adds an infrastructure dependency (Redis server)
+- Distributed locking is complex (Redlock algorithm, TTL, network partition handling)
+- If Redis goes down, all reservations are blocked
+- Unnecessary when PostgreSQL can handle atomic operations natively
 
-### Tại sao không dùng Queue (Option D)?
-- Queue serializes tất cả requests — throughput rất thấp
-- Thêm độ phức tạp (BullMQ, worker process, retry logic)
-- Phù hợp khi có millions of concurrent users, không phải 3 ghế
+### Why not Queue (Option D)?
+- A queue serialises all requests — very low throughput
+- Adds complexity (BullMQ, worker process, retry logic)
+- Appropriate for millions of concurrent users, not for a small venue
 
-### Seat Hold Mechanism (10 phút)
-Khi user chọn ghế nhưng chưa thanh toán, ghế cần được "giữ" tạm thời:
-- Hold duration: 10 phút (đủ để hoàn thành thanh toán)
-- Release expired holds: Vercel Cron chạy mỗi phút
+### Seat Hold Mechanism (10 minutes)
+When a user selects a seat but has not yet paid, the seat is temporarily held:
+- Hold duration: 10 minutes (sufficient to complete payment)
+- Expired holds are reclaimed **inline** on the next reservation attempt via the same atomic UPDATE condition (`status = 'held' AND held_until < NOW()`), so no seat is stuck regardless of cron schedule
+- A Vercel Cron job (`/api/cron/release-holds`) also runs daily to clean up any remaining stale holds in the DB — on Vercel Hobby plan only daily crons are supported
 
-```typescript
-// /api/cron/release-holds — chạy mỗi phút qua Vercel Cron
-await db.query(`
-  UPDATE seats
-  SET status = 'available', held_by = NULL, held_until = NULL
-  WHERE status = 'held' AND held_until < NOW()
-`);
-```
-
-### DB Unique Constraint làm backstop
+### DB Unique Constraint as backstop
 ```sql
-CONSTRAINT one_active_reservation_per_seat
-  UNIQUE (seat_id) WHERE (status = 'confirmed')
+CREATE UNIQUE INDEX one_confirmed_per_seat ON reservations (seat_id) WHERE (status = 'confirmed');
 ```
-Dù có bug ở application layer, DB constraint đảm bảo không bao giờ có 2 confirmed reservation cho cùng một ghế.
+Even if there is an application-layer bug, the DB constraint guarantees that no two confirmed reservations can ever exist for the same seat.
 
 ---
 
-## Hệ quả
+## Consequences
 
-**Tích cực:**
-- Không thể double-book — đảm bảo bởi cả application logic lẫn DB constraint
-- Không cần thêm infrastructure
-- Dễ test (có thể simulate race condition bằng concurrent requests)
+**Positive:**
+- Double booking is impossible — enforced by both application logic and DB constraint
+- No additional infrastructure required
+- Easy to test (race conditions can be simulated with concurrent requests)
 
-**Tiêu cực / Rủi ro:**
-- User thứ hai nhận error "Ghế đã được chọn" phải refresh và chọn lại — UX không mượt
-- Seat hold 10 phút có thể bị lạm dụng (user hold nhiều ghế rồi không thanh toán) — acceptable cho 3 ghế
-- Vercel Cron có độ chính xác ~1 phút — một số ghế bị hold lâu hơn 10 phút một chút
+**Negative / Risks:**
+- The second user receives a "seat just taken" error and must choose another — not a seamless UX
+- The 10-minute hold could be abused (a user holding seats without paying) — acceptable for a small venue
+- Cron job runs at most once per day on Hobby plan; expired holds are reclaimed inline on the next request so there is no user-visible impact
 
-**Cần làm thêm (ngoài scope assessment):**
-- Real-time UI update khi ghế bị hold/released (Supabase Realtime)
-- Countdown timer trên UI cho user biết còn bao nhiêu thời gian giữ ghế
-- Rate limit API đặt ghế để chống abuse
+**Out of scope (future work):**
+- Real-time UI updates when a seat is held or released (Supabase Realtime)
+- Countdown timer in the UI showing remaining hold time
+- Rate limiting the reservation API to prevent abuse
