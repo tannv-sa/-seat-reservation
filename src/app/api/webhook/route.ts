@@ -3,7 +3,6 @@ import { createServiceClient } from '@/lib/supabase/service'
 import { NextResponse } from 'next/server'
 import type Stripe from 'stripe'
 
-// Raw body bắt buộc để verify Stripe signature
 export const runtime = 'nodejs'
 
 async function releaseSeatHold(paymentIntentId: string, service: ReturnType<typeof createServiceClient>) {
@@ -35,7 +34,6 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing stripe-signature' }, { status: 400 })
   }
 
-  // Bước 1: Verify Stripe signature — từ chối request không đến từ Stripe
   let event: Stripe.Event
   try {
     event = stripe.webhooks.constructEvent(
@@ -52,7 +50,6 @@ export async function POST(req: Request) {
   if (event.type === 'payment_intent.succeeded') {
     const intent = event.data.object as Stripe.PaymentIntent
 
-    // Bước 2: Idempotency check — Stripe có thể gửi cùng event nhiều lần
     const { data: reservation } = await service
       .from('reservations')
       .select('id, seat_id, status')
@@ -60,22 +57,20 @@ export async function POST(req: Request) {
       .maybeSingle()
 
     if (!reservation) {
-      // Không tìm thấy — có thể payment_intent không phải của hệ thống
       return NextResponse.json({ received: true })
     }
 
+    // Idempotency: already confirmed — return 200 so Stripe stops retrying
     if (reservation.status === 'confirmed') {
-      // Đã xử lý trước đó — trả 200 để Stripe không retry
       return NextResponse.json({ received: true })
     }
 
-    // Bước 3: Cập nhật reservation + seat trong cùng một batch
     const [resResult, seatResult] = await Promise.all([
       service
         .from('reservations')
         .update({ status: 'confirmed' })
         .eq('payment_intent_id', intent.id)
-        .eq('status', 'pending'), // double-check: tránh confirm reservation đã cancelled
+        .eq('status', 'pending'),
       service
         .from('seats')
         .update({ status: 'reserved', held_by: null, held_until: null })
@@ -83,11 +78,7 @@ export async function POST(req: Request) {
     ])
 
     if (resResult.error || seatResult.error) {
-      // Trả 500 để Stripe retry
-      return NextResponse.json(
-        { error: 'DB update failed' },
-        { status: 500 }
-      )
+      return NextResponse.json({ error: 'DB update failed' }, { status: 500 })
     }
   }
 

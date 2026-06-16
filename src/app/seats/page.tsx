@@ -16,7 +16,7 @@ export default async function SeatsPage() {
     .select('*')
     .order('label')
 
-  if (error) throw new Error('Không thể tải danh sách ghế')
+  if (error) throw new Error('Failed to load seats')
 
   const { data: myReservation } = await supabase
     .from('reservations')
@@ -28,9 +28,9 @@ export default async function SeatsPage() {
   return (
     <div>
       <div className="mb-8">
-        <h1 className="text-2xl font-semibold mb-1">Chọn ghế ngồi</h1>
+        <h1 className="text-2xl font-semibold mb-1">Select a seat</h1>
         <p className="text-gray-400 text-sm">
-          Đang đăng nhập với{' '}
+          Signed in as{' '}
           <span className="font-medium text-gray-600">{user.email}</span>
         </p>
       </div>
@@ -46,7 +46,7 @@ export default async function SeatsPage() {
       </div>
 
       <p className="mt-8 text-xs text-gray-400 text-center">
-        Ghế được giữ tạm thời 10 phút sau khi chọn. Hoàn tất thanh toán để xác nhận.
+        Seats are held for 10 minutes after selection. Complete payment to confirm.
       </p>
     </div>
   )

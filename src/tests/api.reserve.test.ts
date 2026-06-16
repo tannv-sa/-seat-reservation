@@ -98,7 +98,7 @@ describe('POST /api/reserve', () => {
     })
     const res = await POST(req({ seatId: 'seat-1' }))
     expect(res.status).toBe(409)
-    expect((await res.json()).error).toMatch(/đã có ghế/i)
+    expect((await res.json()).error).toMatch(/already have a confirmed/i)
   })
 
   it('409 khi atomic UPDATE trả về null — ghế đã bị hold (race condition bị ngăn)', async () => {
@@ -108,7 +108,7 @@ describe('POST /api/reserve', () => {
 
     const res = await POST(req({ seatId: 'seat-1' }))
     expect(res.status).toBe(409)
-    expect((await res.json()).error).toMatch(/vừa được người khác/i)
+    expect((await res.json()).error).toMatch(/just taken/i)
   })
 
   it('200 + clientSecret + seatLabel khi hold ghế thành công', async () => {

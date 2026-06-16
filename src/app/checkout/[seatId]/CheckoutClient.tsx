@@ -40,7 +40,7 @@ export default function CheckoutClient({ seatId }: CheckoutClientProps) {
       })
       .catch(err => {
         if (err.name !== 'AbortError') {
-          setError('Lỗi kết nối. Vui lòng thử lại.')
+          setError('Connection error. Please try again.')
         }
       })
 
@@ -57,7 +57,7 @@ export default function CheckoutClient({ seatId }: CheckoutClientProps) {
             href="/seats"
             className="text-sm text-blue-600 hover:underline"
           >
-            ← Quay lại chọn ghế
+            ← Back to seat selection
           </a>
         </div>
       </div>
@@ -69,7 +69,7 @@ export default function CheckoutClient({ seatId }: CheckoutClientProps) {
       <div className="max-w-sm mx-auto mt-16 text-center">
         <div className="bg-white rounded-2xl border border-gray-100 p-8">
           <div className="animate-spin text-3xl mb-4">⏳</div>
-          <p className="text-gray-400 text-sm">Đang chuẩn bị thanh toán...</p>
+          <p className="text-gray-400 text-sm">Preparing checkout...</p>
         </div>
       </div>
     )
@@ -79,11 +79,11 @@ export default function CheckoutClient({ seatId }: CheckoutClientProps) {
     <div className="max-w-sm mx-auto mt-10">
       <div className="mb-6">
         <a href="/seats" className="text-sm text-gray-400 hover:text-gray-600">
-          ← Quay lại
+          ← Back
         </a>
-        <h1 className="text-2xl font-semibold mt-3 mb-1">Thanh toán</h1>
+        <h1 className="text-2xl font-semibold mt-3 mb-1">Payment</h1>
         <p className="text-gray-400 text-sm">
-          Ghế <span className="font-semibold text-gray-700">{seatLabel}</span> — được giữ 10 phút
+          Seat <span className="font-semibold text-gray-700">{seatLabel}</span> — held for 10 minutes
         </p>
       </div>
 
@@ -121,9 +121,8 @@ function PaymentForm() {
       },
     })
 
-    // Chỉ đến đây nếu có lỗi — thành công thì Stripe redirect luôn
     if (error) {
-      setErrorMsg(error.message ?? 'Thanh toán thất bại. Vui lòng thử lại.')
+      setErrorMsg(error.message ?? 'Payment failed. Please try again.')
       setLoading(false)
     }
   }
@@ -141,11 +140,11 @@ function PaymentForm() {
         disabled={!stripe || loading}
         className="w-full bg-gray-900 text-white py-3 rounded-xl text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-50"
       >
-        {loading ? 'Đang xử lý...' : 'Xác nhận thanh toán — $100.00'}
+        {loading ? 'Processing...' : 'Confirm payment — $100.00'}
       </button>
 
       <p className="text-xs text-gray-400 text-center">
-        Thẻ test: 4242 4242 4242 4242 · Bất kỳ ngày hết hạn & CVC
+        Test card: 4242 4242 4242 4242 · Any future expiry & CVC
       </p>
     </form>
   )

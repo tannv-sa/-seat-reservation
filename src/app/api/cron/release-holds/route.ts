@@ -4,7 +4,6 @@ import { NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 
 export async function GET(req: Request) {
-  // Bảo vệ bằng secret header — Vercel Cron tự gửi header này
   const authHeader = req.headers.get('authorization')
   if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -23,7 +22,6 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  // Huỷ các reservation pending tương ứng
   if (data && data.length > 0) {
     const seatIds = data.map((s: { id: string }) => s.id)
     await service

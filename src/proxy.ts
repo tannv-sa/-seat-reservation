@@ -25,12 +25,10 @@ export async function proxy(request: NextRequest) {
     }
   )
 
-  // Refresh session — bắt buộc để giữ JWT không bị stale
   const { data: { user } } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
 
-  // Route cần đăng nhập
   const protectedPaths = ['/seats', '/checkout', '/success']
   const isProtected = protectedPaths.some(p => pathname.startsWith(p))
 
@@ -40,7 +38,6 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl)
   }
 
-  // Đã đăng nhập thì không vào /login nữa
   if (pathname === '/login' && user) {
     return NextResponse.redirect(new URL('/seats', request.url))
   }

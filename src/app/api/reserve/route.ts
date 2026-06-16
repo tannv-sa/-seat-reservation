@@ -4,7 +4,6 @@ import { stripe } from '@/lib/stripe'
 import { NextResponse } from 'next/server'
 
 export async function POST(req: Request) {
-  // Xác thực user
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) {
@@ -19,7 +18,7 @@ export async function POST(req: Request) {
 
   const service = createServiceClient()
 
-  // Kiểm tra user đã có ghế confirmed chưa
+  // Reject if user already has a confirmed reservation
   const { data: existing } = await service
     .from('reservations')
     .select('id, seat_id')
@@ -29,12 +28,13 @@ export async function POST(req: Request) {
 
   if (existing) {
     return NextResponse.json(
-      { error: 'Bạn đã có ghế đặt thành công' },
+      { error: 'You already have a confirmed reservation' },
       { status: 409 }
     )
   }
 
-  // Idempotency: user đang hold chính ghế này (React StrictMode double-fire, hoặc retry)
+  // Idempotency: return existing PaymentIntent if user already holds this seat
+  // (handles React StrictMode double-invocation and retries)
   const { data: pendingRes } = await service
     .from('reservations')
     .select('payment_intent_id, seats(label)')
@@ -53,32 +53,31 @@ export async function POST(req: Request) {
     }
   }
 
-  // Atomic hold: chỉ thành công nếu ghế đang available
+  // Atomic hold: only succeeds if seat is currently available.
+  // Single UPDATE prevents race conditions — no Redis lock needed.
   const holdUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString()
   const { data: seat, error: seatError } = await service
     .from('seats')
     .update({ status: 'held', held_by: user.id, held_until: holdUntil })
     .eq('id', seatId)
-    .eq('status', 'available') // ← điều kiện atomic, ngăn race condition
+    .eq('status', 'available')
     .select()
     .maybeSingle()
 
   if (seatError || !seat) {
     return NextResponse.json(
-      { error: 'Ghế này vừa được người khác chọn. Vui lòng chọn ghế khác.' },
+      { error: 'This seat was just taken. Please choose another.' },
       { status: 409 }
     )
   }
 
-  // Tạo Stripe PaymentIntent
   const paymentIntent = await stripe.paymentIntents.create({
-    amount: 10000, // 10,000 đơn vị nhỏ nhất của currency
-    currency: 'usd', // Stripe test mode dùng usd cho đơn giản
+    amount: 10000,
+    currency: 'usd',
     metadata: { seatId, userId: user.id, seatLabel: seat.label },
     automatic_payment_methods: { enabled: true },
   })
 
-  // Lưu reservation ở trạng thái pending
   const { error: resError } = await service.from('reservations').insert({
     seat_id: seatId,
     user_id: user.id,
@@ -87,14 +86,14 @@ export async function POST(req: Request) {
   })
 
   if (resError) {
-    // Rollback: giải phóng ghế nếu không lưu được reservation
+    // Rollback: release the seat hold if reservation insert failed
     await service
       .from('seats')
       .update({ status: 'available', held_by: null, held_until: null })
       .eq('id', seatId)
 
     return NextResponse.json(
-      { error: 'Lỗi tạo đơn đặt chỗ. Vui lòng thử lại.' },
+      { error: 'Failed to create reservation. Please try again.' },
       { status: 500 }
     )
   }
