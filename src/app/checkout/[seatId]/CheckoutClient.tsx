@@ -22,10 +22,13 @@ export default function CheckoutClient({ seatId }: CheckoutClientProps) {
   const [error, setError] = useState<string>()
 
   useEffect(() => {
+    const controller = new AbortController()
+
     fetch('/api/reserve', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ seatId }),
+      signal: controller.signal,
     })
       .then(r => r.json())
       .then(data => {
@@ -35,7 +38,13 @@ export default function CheckoutClient({ seatId }: CheckoutClientProps) {
           setSeatLabel(data.seatLabel)
         }
       })
-      .catch(() => setError('Lỗi kết nối. Vui lòng thử lại.'))
+      .catch(err => {
+        if (err.name !== 'AbortError') {
+          setError('Lỗi kết nối. Vui lòng thử lại.')
+        }
+      })
+
+    return () => controller.abort()
   }, [seatId])
 
   if (error) {

@@ -34,6 +34,25 @@ export async function POST(req: Request) {
     )
   }
 
+  // Idempotency: user đang hold chính ghế này (React StrictMode double-fire, hoặc retry)
+  const { data: pendingRes } = await service
+    .from('reservations')
+    .select('payment_intent_id, seats(label)')
+    .eq('user_id', user.id)
+    .eq('seat_id', seatId)
+    .eq('status', 'pending')
+    .maybeSingle()
+
+  if (pendingRes?.payment_intent_id) {
+    const intent = await stripe.paymentIntents.retrieve(pendingRes.payment_intent_id)
+    if (intent.status !== 'canceled') {
+      return NextResponse.json({
+        clientSecret: intent.client_secret,
+        seatLabel: (pendingRes.seats as unknown as { label: string })?.label,
+      })
+    }
+  }
+
   // Atomic hold: chỉ thành công nếu ghế đang available
   const holdUntil = new Date(Date.now() + 10 * 60 * 1000).toISOString()
   const { data: seat, error: seatError } = await service
