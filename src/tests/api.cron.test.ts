@@ -12,8 +12,6 @@ const { mockSeatsRelease } = vi.hoisted(() => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (table: string) => {
-      // seats: .update().eq().lt().select() → thenable (await directly)
-      // reservations: .update().in().eq() → thenable (await directly)
       const b: any = {
         then:
           table === 'seats'
@@ -46,18 +44,18 @@ describe('GET /api/cron/release-holds', () => {
     mockSeatsRelease.mockResolvedValue({ data: [], error: null })
   })
 
-  it('401 khi thiếu Authorization header', async () => {
+  it('401 when Authorization header is missing', async () => {
     const res = await GET(req())
     expect(res.status).toBe(401)
     expect((await res.json()).error).toBe('Unauthorized')
   })
 
-  it('401 khi sai CRON_SECRET', async () => {
+  it('401 when CRON_SECRET is wrong', async () => {
     const res = await GET(req('Bearer wrong-secret'))
     expect(res.status).toBe(401)
   })
 
-  it('200 + released=0 khi không có ghế nào hết hạn hold', async () => {
+  it('200 + released=0 when no holds have expired', async () => {
     mockSeatsRelease.mockResolvedValue({ data: [], error: null })
 
     const res = await GET(req('Bearer test-cron-secret'))
@@ -68,7 +66,7 @@ describe('GET /api/cron/release-holds', () => {
     expect(body.seats).toEqual([])
   })
 
-  it('200 + released=N khi có ghế hết hạn', async () => {
+  it('200 + released=N when expired holds exist', async () => {
     mockSeatsRelease.mockResolvedValue({
       data: [
         { id: 'seat-1', label: 'A1' },
@@ -85,7 +83,7 @@ describe('GET /api/cron/release-holds', () => {
     expect(body.seats).toEqual(['A1', 'B3'])
   })
 
-  it('500 khi Supabase trả về lỗi', async () => {
+  it('500 when Supabase returns an error', async () => {
     mockSeatsRelease.mockResolvedValue({
       data: null,
       error: { message: 'connection timeout' },
@@ -96,7 +94,7 @@ describe('GET /api/cron/release-holds', () => {
     expect((await res.json()).error).toBe('connection timeout')
   })
 
-  it('response có trường timestamp', async () => {
+  it('response includes a valid timestamp field', async () => {
     const res = await GET(req('Bearer test-cron-secret'))
     const body = await res.json()
     expect(body.timestamp).toBeDefined()

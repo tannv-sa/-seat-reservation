@@ -1,6 +1,6 @@
 import CheckoutClient from './CheckoutClient'
 
-// Next.js 16: params là Promise
+// Next.js 16: params is a Promise
 export default async function CheckoutPage({
   params,
 }: {

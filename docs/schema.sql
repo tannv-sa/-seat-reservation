@@ -1,9 +1,9 @@
 -- ============================================================
 -- Seat Reservation Platform — Database Schema
--- Chạy trong Supabase SQL Editor
+-- Run in Supabase SQL Editor
 -- ============================================================
 
--- Bảng ghế ngồi
+-- Seats table
 CREATE TABLE seats (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   label       TEXT NOT NULL,
@@ -13,7 +13,7 @@ CREATE TABLE seats (
   CONSTRAINT valid_status CHECK (status IN ('available', 'held', 'reserved'))
 );
 
--- Bảng đặt chỗ
+-- Reservations table
 CREATE TABLE reservations (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   seat_id            UUID NOT NULL REFERENCES seats(id),
@@ -24,12 +24,18 @@ CREATE TABLE reservations (
   CONSTRAINT valid_res_status CHECK (status IN ('pending', 'confirmed', 'cancelled'))
 );
 
--- Partial unique index: không bao giờ có 2 confirmed reservation cho cùng một ghế
--- Dùng CREATE UNIQUE INDEX thay vì inline CONSTRAINT vì PostgreSQL không hỗ trợ WHERE trong table constraint
+-- Partial unique index: ensures no two confirmed reservations exist for the same seat.
+-- Uses CREATE UNIQUE INDEX instead of inline CONSTRAINT because PostgreSQL does not
+-- support WHERE clauses in table-level constraints.
 CREATE UNIQUE INDEX one_confirmed_per_seat ON reservations (seat_id) WHERE (status = 'confirmed');
 
--- Seed 3 ghế ban đầu
-INSERT INTO seats (label) VALUES ('A1'), ('A2'), ('A3');
+-- Seed: 5 rows x 6 seats = 30 seats
+INSERT INTO seats (label) VALUES
+  ('A1'), ('A2'), ('A3'), ('A4'), ('A5'), ('A6'),
+  ('B1'), ('B2'), ('B3'), ('B4'), ('B5'), ('B6'),
+  ('C1'), ('C2'), ('C3'), ('C4'), ('C5'), ('C6'),
+  ('D1'), ('D2'), ('D3'), ('D4'), ('D5'), ('D6'),
+  ('E1'), ('E2'), ('E3'), ('E4'), ('E5'), ('E6');
 
 -- ============================================================
 -- Row Level Security
@@ -38,28 +44,28 @@ INSERT INTO seats (label) VALUES ('A1'), ('A2'), ('A3');
 ALTER TABLE seats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reservations ENABLE ROW LEVEL SECURITY;
 
--- Mọi người đều đọc được danh sách ghế (public)
+-- Anyone can read the seat list (public)
 CREATE POLICY "seats_read_all"
   ON seats FOR SELECT
   USING (true);
 
--- Chỉ service role (server) được UPDATE ghế — không cho browser client gọi trực tiếp
+-- Only the service role (server) can UPDATE seats — prevents direct browser calls
 CREATE POLICY "seats_update_service"
   ON seats FOR UPDATE
   USING (auth.role() = 'service_role');
 
--- User chỉ đọc được reservation của chính mình
+-- Users can only read their own reservations
 CREATE POLICY "reservations_read_own"
   ON reservations FOR SELECT
   USING (auth.uid() = user_id);
 
--- Chỉ service role được INSERT/UPDATE reservations
+-- Only the service role can INSERT/UPDATE reservations
 CREATE POLICY "reservations_write_service"
   ON reservations FOR ALL
   USING (auth.role() = 'service_role');
 
 -- ============================================================
--- Helper function: release expired holds (dùng cho cron)
+-- Helper function: release expired holds (used by cron job)
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION release_expired_holds()

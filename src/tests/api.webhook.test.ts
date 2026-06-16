@@ -52,13 +52,13 @@ describe('POST /api/webhook', () => {
     mockReservationQuery.mockResolvedValue({ data: null, error: null })
   })
 
-  it('400 khi thiếu stripe-signature header', async () => {
+  it('400 when stripe-signature header is missing', async () => {
     const res = await POST(req('{}'))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toContain('signature')
   })
 
-  it('400 khi signature không hợp lệ', async () => {
+  it('400 when signature is invalid', async () => {
     mockConstructEvent.mockImplementation(() => {
       throw new Error('Stripe signature verification failed')
     })
@@ -67,7 +67,7 @@ describe('POST /api/webhook', () => {
     expect((await res.json()).error).toBe('Invalid signature')
   })
 
-  it('200 khi payment_intent.succeeded — cập nhật reservation thành confirmed', async () => {
+  it('200 on payment_intent.succeeded — updates reservation to confirmed', async () => {
     mockConstructEvent.mockReturnValue({
       type: 'payment_intent.succeeded',
       data: { object: { id: 'pi_abc' } },
@@ -84,7 +84,7 @@ describe('POST /api/webhook', () => {
     expect(body.received).toBe(true)
   })
 
-  it('idempotency: 200 ngay lập tức khi reservation đã confirmed (Stripe không retry)', async () => {
+  it('idempotency: 200 immediately when reservation already confirmed (Stripe stops retrying)', async () => {
     mockConstructEvent.mockReturnValue({
       type: 'payment_intent.succeeded',
       data: { object: { id: 'pi_abc' } },
@@ -99,7 +99,7 @@ describe('POST /api/webhook', () => {
     expect((await res.json()).received).toBe(true)
   })
 
-  it('200 và bỏ qua khi không tìm thấy reservation (payment intent không phải của hệ thống)', async () => {
+  it('200 and ignores when reservation not found (payment intent not from this system)', async () => {
     mockConstructEvent.mockReturnValue({
       type: 'payment_intent.succeeded',
       data: { object: { id: 'pi_unknown' } },
@@ -110,7 +110,7 @@ describe('POST /api/webhook', () => {
     expect(res.status).toBe(200)
   })
 
-  it('200 và giải phóng ghế khi payment_intent.payment_failed', async () => {
+  it('200 and releases seat on payment_intent.payment_failed', async () => {
     mockConstructEvent.mockReturnValue({
       type: 'payment_intent.payment_failed',
       data: { object: { id: 'pi_fail' } },
@@ -125,7 +125,7 @@ describe('POST /api/webhook', () => {
     expect((await res.json()).received).toBe(true)
   })
 
-  it('200 và giải phóng ghế khi payment_intent.canceled', async () => {
+  it('200 and releases seat on payment_intent.canceled', async () => {
     mockConstructEvent.mockReturnValue({
       type: 'payment_intent.canceled',
       data: { object: { id: 'pi_cancel' } },
@@ -139,7 +139,7 @@ describe('POST /api/webhook', () => {
     expect(res.status).toBe(200)
   })
 
-  it('200 cho event type không xử lý', async () => {
+  it('200 for unhandled event types', async () => {
     mockConstructEvent.mockReturnValue({
       type: 'customer.created',
       data: { object: {} },

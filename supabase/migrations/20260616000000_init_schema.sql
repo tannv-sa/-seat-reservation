@@ -2,7 +2,7 @@
 -- Migration: init schema
 -- ============================================================
 
--- Bảng ghế ngồi
+-- Seats table
 CREATE TABLE seats (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   label       TEXT NOT NULL,
@@ -12,7 +12,7 @@ CREATE TABLE seats (
   CONSTRAINT valid_status CHECK (status IN ('available', 'held', 'reserved'))
 );
 
--- Bảng đặt chỗ
+-- Reservations table
 CREATE TABLE reservations (
   id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   seat_id            UUID NOT NULL REFERENCES seats(id),
@@ -23,7 +23,7 @@ CREATE TABLE reservations (
   CONSTRAINT valid_res_status CHECK (status IN ('pending', 'confirmed', 'cancelled'))
 );
 
--- Partial unique index: không bao giờ có 2 confirmed reservation cho cùng một ghế
+-- Partial unique index: ensures no two confirmed reservations exist for the same seat
 CREATE UNIQUE INDEX one_confirmed_per_seat ON reservations (seat_id) WHERE (status = 'confirmed');
 
 -- ============================================================
@@ -33,22 +33,22 @@ CREATE UNIQUE INDEX one_confirmed_per_seat ON reservations (seat_id) WHERE (stat
 ALTER TABLE seats ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reservations ENABLE ROW LEVEL SECURITY;
 
--- Ai cũng đọc được danh sách ghế
+-- Anyone can read the seat list
 CREATE POLICY "seats_read_all"
   ON seats FOR SELECT
   USING (true);
 
--- Chỉ service role được UPDATE ghế (server-side API route)
+-- Only the service role can UPDATE seats (server-side API routes only)
 CREATE POLICY "seats_update_service"
   ON seats FOR UPDATE
   USING (auth.role() = 'service_role');
 
--- User chỉ đọc reservation của chính mình
+-- Users can only read their own reservations
 CREATE POLICY "reservations_read_own"
   ON reservations FOR SELECT
   USING (auth.uid() = user_id);
 
--- Chỉ service role được ghi reservations
+-- Only the service role can write reservations
 CREATE POLICY "reservations_write_service"
   ON reservations FOR ALL
   USING (auth.role() = 'service_role');

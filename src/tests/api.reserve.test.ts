@@ -26,12 +26,10 @@ vi.mock('@/lib/supabase/server', () => ({
 vi.mock('@/lib/supabase/service', () => ({
   createServiceClient: () => ({
     from: (table: string) => {
-      // Generic builder — chains every method, exposes maybySingle and thenable
       function makeBuilder(maybySingleFn: any, insertFn?: any) {
         const b: any = {
           maybeSingle: maybySingleFn,
           insert: insertFn ?? (() => Promise.resolve({ data: {}, error: null })),
-          // Thenable for `await builder` (rollback path)
           then: (res: any, rej: any) =>
             Promise.resolve({ data: null, error: null }).then(res, rej),
         }
@@ -41,7 +39,6 @@ vi.mock('@/lib/supabase/service', () => ({
         return b
       }
       if (table === 'seats') return makeBuilder(mockSeatsHold)
-      // reservations
       return makeBuilder(mockExistingReservation, mockReservationsInsert)
     },
   }),
@@ -66,7 +63,6 @@ function req(body: object) {
 describe('POST /api/reserve', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    // Defaults: unauthenticated, no existing reservation, seat is taken, insert ok
     mockGetUser.mockResolvedValue({ data: { user: null } })
     mockExistingReservation.mockResolvedValue({ data: null, error: null })
     mockSeatsHold.mockResolvedValue({ data: null, error: null })
@@ -77,20 +73,20 @@ describe('POST /api/reserve', () => {
     })
   })
 
-  it('401 khi chưa đăng nhập', async () => {
+  it('401 when not authenticated', async () => {
     const res = await POST(req({ seatId: 'seat-1' }))
     expect(res.status).toBe(401)
     expect((await res.json()).error).toBe('Unauthorized')
   })
 
-  it('400 khi thiếu seatId', async () => {
+  it('400 when seatId is missing', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'u1' } } })
     const res = await POST(req({}))
     expect(res.status).toBe(400)
     expect((await res.json()).error).toContain('seatId')
   })
 
-  it('409 khi user đã có reservation confirmed', async () => {
+  it('409 when user already has a confirmed reservation', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'u1' } } })
     mockExistingReservation.mockResolvedValue({
       data: { id: 'res-1', seat_id: 'seat-2' },
@@ -101,9 +97,8 @@ describe('POST /api/reserve', () => {
     expect((await res.json()).error).toMatch(/already have a confirmed/i)
   })
 
-  it('409 khi atomic UPDATE trả về null — ghế đã bị hold (race condition bị ngăn)', async () => {
+  it('409 when atomic UPDATE returns null — seat just taken (race condition blocked)', async () => {
     mockGetUser.mockResolvedValue({ data: { user: { id: 'u1' } } })
-    // mockSeatsHold trả về { data: null } → WHERE status='available' không khớp
     mockSeatsHold.mockResolvedValue({ data: null, error: null })
 
     const res = await POST(req({ seatId: 'seat-1' }))
@@ -111,7 +106,7 @@ describe('POST /api/reserve', () => {
     expect((await res.json()).error).toMatch(/just taken/i)
   })
 
-  it('200 + clientSecret + seatLabel khi hold ghế thành công', async () => {
+  it('200 + clientSecret + seatLabel when seat hold succeeds', async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: 'u1', email: 'a@b.com' } },
     })
@@ -132,7 +127,7 @@ describe('POST /api/reserve', () => {
     expect(body.seatLabel).toBe('A1')
   })
 
-  it('Stripe PaymentIntent.create nhận đúng metadata', async () => {
+  it('Stripe PaymentIntent.create receives correct metadata', async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: 'u1', email: 'a@b.com' } },
     })
@@ -150,7 +145,7 @@ describe('POST /api/reserve', () => {
     )
   })
 
-  it('500 khi insert reservation thất bại (và rollback seat được gọi)', async () => {
+  it('500 when reservation insert fails (seat hold is rolled back)', async () => {
     mockGetUser.mockResolvedValue({
       data: { user: { id: 'u1', email: 'a@b.com' } },
     })
